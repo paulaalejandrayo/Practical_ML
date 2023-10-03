@@ -1,0 +1,253 @@
+---
+title: "Practical machine learning"
+date: "2023-10-02"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+library(caret)
+library(ggplot2)
+library(tidyr)
+library("ggcorrplot")
+```
+
+# Overview
+
+ The goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways (classe A to E). 
+"Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E)." (Read more: http:/groupware.les.inf.puc-rio.br/har#ixzz4TphcNzin)
+
+In section "Loading and cleaning" we load and pre-process the data, to remove the "NA" and variables "trivially correlated" such as the index ("X"), or the time (See Fig. 1, in the Appendix).
+In the section "Model" we train our model, using a random forest (without principal component analysis). We used 80% of the observations for training and the remaining 20% for testing. 
+In section "Prediction" we predict the values for the "testing data" provided in this exercise. 
+
+Preliminary analysis of the data variables is shown in the Appendix 1.
+The cross validation and the estimation of the out of the sample error are shown in the Appendix 1. There, we performed (k-folds with k=10, as this is assumed to be a good balance between data variability and bias). We analysed the accuracy of 4 different training models: multivariate, regression trees ("rpart"), boosting ("gbm") and random forest "rf". We also evaluated the difference between pre-processing with and without principal component analysis "pca". We show that the random forest without "pca" is the model that performs better, with a out-of-the sample estimated error of ~0.99.
+ 
+ 
+## Loading and cleaning
+
+```{r, loading}
+data <- read.csv("/home/paula/Documents/DATA_SCIENCE/practical_ML/project/pml-training.csv")
+dim(data)
+data$classe<-as.factor(data$classe)
+
+set.seed(23457)
+inTrain<-createDataPartition(y=data$classe,p=0.8,list=FALSE)
+training<-data[inTrain,]
+testing<-data[-inTrain,]
+```
+
+```{r, function accuracy}
+accur<-function(values,prediction){confusionMatrix(values$classe, prediction)}
+```
+
+pre-processing:removing NA and non numerical values (""). (See Appendix 2.)
+
+```{r, removing_NAs }
+Y<- c()
+for (i in c(1:length(names(training)))) {
+    X<-(is.na(as.numeric(training[,i])))
+    Y[i]<-(dim(training[X,])[1]==0)
+}
+    Clean_training<-training[,Y]  
+    #removing un-meaningful variables
+    Final_training<-Clean_training[,c(5:dim(Clean_training)[2])]  
+    dim(Final_training)
+    names(Final_training)
+```
+
+repeating the pre-processing for the testing set
+
+```{r }
+Clean_testing<-testing[,Y]
+Final_testing<-Clean_testing[,c(5:dim(Clean_training)[2])]
+```
+
+## Model: using a random forest (without principal component analysis)
+
+```{r, final_model, cache=TRUE}
+FIT_final <-train(classe~. , data=Final_training,   method="rf")
+```
+
+```{r}
+Predict_final    <-predict(FIT_final , Final_testing)
+```
+
+```{r}
+accur(Final_testing,Predict_final  )$overall[1]
+```
+
+
+# Prediction: Predicting values in the test set provided
+
+```{r}
+test_data <- read.csv("/home/paula/Documents/DATA_SCIENCE/practical_ML/project/pml-testing.csv")
+predict_values<-predict(FIT_final, test_data)
+predict_values
+```
+
+# Apendix 1 pre-analyising the data
+
+this data contains `r toString(dim(data[2]))` (-1) possible predictors and `r toString(dim(data[1]))` observations. 
+```{r}
+names(data)
+head(data$classe)
+```
+
+The variable we are interested in predicting is a factor, so I will conver it to factor for proper interpretability.  
+After looking at the data there area several variables that do not contain more than 1% of the values, so I want to clean the data set from these variables:
+
+```{r}
+Y<- c()
+Z<- c()
+for (i in c(1:length(names(training)))) {
+    X<-(is.na(as.numeric(training[,i]))) #these are the NA values
+     # this is the percentage of non NA in each variable
+    Z[i]<-(1-(dim(training[X,])[1]/dim(training[,])[1]))*100 # this is the percentage of non NA in each variable
+     #This is the vector with the indexes of the variables that are completed  
+    Y[i]<-(dim(training[X,])[1]==0)  
+}
+Z
+    Clean_training<-training[,Y]  
+    dim(Clean_training)
+    names(Clean_training)
+```
+
+The variables `r toString(names(Clean_training[,c(1:4)]))`  are not correlated or has a trivial correlation with "classe" (as the case of X, that is an index), and, therefore, should not be taken into account).
+
+```{r , fig.width=7,fig.height=4,fig.cap="Fig ", cache=TRUE}
+(Clean_training[,c(1:4,dim(Clean_training)[2])]) %>%
+  gather(-classe, key = "var", value = "value") %>% 
+  ggplot(aes(x = value, y = classe, color = classe)) +
+    geom_point() +
+    facet_wrap(~ var, scales = "free") +
+    theme_bw()
+```
+ 
+# Appendix2
+
+### Cross-reference and model selection:
+
+We will use 4 different models with and without principal component "pca" pre-processing. We use cross validation with k-fold (with 10 folds)
+We will test the Multinomial Log-linear Models "multinom", regression trees "rpart", boosting "gbm" and random forest "rf". 
+
+```{r, general_parameters}
+DATA<-Final_training
+train_control<- trainControl(method="cv", number=10, savePredictions = TRUE)
+
+#insmall<-createDataPartition(y=Final_training$classe,p=0.2,list=FALSE)
+#small_test<-Final_training[insmall,]
+
+#DATA<-small_test
+```
+
+With "pca" 
+
+
+```{r, multinorm, cache=TRUE}
+FIT_multinorm<-train(classe~. , data=DATA,  preProcess="pca", method="multinom", 
+                     trControl=train_control, verbose=FALSE, trace=FALSE)
+```
+
+```{r, rpart, cache=TRUE}
+FIT_rpart<-train(classe~. , data=DATA,  preProcess="pca", method="rpart", 
+                 trControl=train_control)
+```
+
+```{r, boosting, cache=TRUE}
+FIT_boosting<-train(classe~. , data=DATA,  preProcess="pca", method="gbm", 
+                    trControl=train_control,verbose=FALSE)
+```
+
+```{r, rf, cache=TRUE}
+FIT_rf<-train(classe~. , data=DATA,  preProcess="pca", method="rf", 
+              trControl=train_control)
+```
+
+Without "pca"
+
+```{r, multinorm2, cache=TRUE}
+FIT_multinorm2<-train(classe~. , data=DATA,   method="multinom", 
+                      trControl=train_control, verbose=FALSE, trace=FALSE)
+```
+
+
+```{r, rpart2, cache=TRUE}
+FIT_rpart2<-train(classe~. , data=DATA,   method="rpart", 
+                  trControl=train_control)
+```
+
+```{r, boosting2, cache=TRUE}
+FIT_boosting2<-train(classe~. , data=DATA,   method="gbm", 
+                     trControl=train_control,verbose=FALSE)
+
+```
+
+```{r, rf2, cache=TRUE}
+FIT_rf2<-train(classe~. , data=DATA,   method="rf", trControl=train_control)
+
+```
+
+```{r}
+results_training<-data.frame(model=character(), out_the_sample_Error=double())
+results_training<-rbind(results_training, data.frame(model="multinorm/pca" 
+                         ,out_the_sample_Error=mean((FIT_multinorm$resample)[1]$Accuracy) ))
+results_training<-rbind(results_training, data.frame(model="rpart/pca"     
+                         ,out_the_sample_Error=mean((FIT_rpart$resample)[1]$Accuracy)     ))
+results_training<-rbind(results_training, data.frame(model="gbm/pca"       
+                         ,out_the_sample_Error=mean((FIT_boosting$resample)[1]$Accuracy)  ))
+results_training<-rbind(results_training, data.frame(model="rf/pca"        
+                         ,out_the_sample_Error=mean((FIT_rf$resample)[1]$Accuracy)        ))
+results_training<-rbind(results_training, data.frame(model="multinorm"    
+                         ,out_the_sample_Error=mean((FIT_multinorm2$resample)[1]$Accuracy)    ))
+results_training<-rbind(results_training, data.frame(model="rpart"         
+                         ,out_the_sample_Error=mean((FIT_rpart2$resample)[1]$Accuracy)        ))
+results_training<-rbind(results_training, data.frame(model="gbm"           
+                         ,out_the_sample_Error=mean((FIT_boosting2$resample)[1]$Accuracy)     ))
+results_training<-rbind(results_training, data.frame(model="rf"        
+                         ,out_the_sample_Error=mean((FIT_rf2$resample)[1]$Accuracy)           ))
+results_training
+```
+
+Testing the models in the data set we have:
+```{r,  cache = TRUE}
+Predict_multinorm    <-predict(FIT_multinorm , Final_testing)
+Predict_rpart        <-predict(FIT_rpart , Final_testing)
+Predict_boosting     <-predict(FIT_boosting , Final_testing)
+Predict_rf           <-predict(FIT_rf , Final_testing)                  
+
+Predict_multinorm2   <-predict(FIT_multinorm2, Final_testing)
+Predict_rpart2       <-predict(FIT_rpart2 , Final_testing)
+Predict_boosting2    <-predict(FIT_boosting2 , Final_testing)
+Predict_rf2          <-predict(FIT_rf2 , Final_testing)                  
+```
+
+
+```{r}
+results_test<-data.frame(model=character(), test_accuracy=double())
+
+results_test<-rbind(results_test,data.frame(model="multinorm/pca" 
+                  , test_accuracy=accur(Final_testing,Predict_multinorm  )$overall[1]))
+results_test<-rbind(results_test,data.frame(model="rpart/pca"     
+                  , test_accuracy=accur(Final_testing,Predict_rpart      )$overall[1]))
+results_test<-rbind(results_test,data.frame(model="gbm/pca"       
+                  , test_accuracy=accur(Final_testing,Predict_boosting   )$overall[1]))
+results_test<-rbind(results_test,data.frame(model="rf/pca"        
+                  , test_accuracy=accur(Final_testing,Predict_rf         )$overall[1]))
+results_test<-rbind(results_test,data.frame(model="multinorm"     
+                  , test_accuracy=accur(Final_testing,Predict_multinorm2 )$overall[1]))
+results_test<-rbind(results_test,data.frame(model="rpart"         
+                  , test_accuracy=accur(Final_testing,Predict_rpart2     )$overall[1]))
+results_test<-rbind(results_test,data.frame(model="gbm"           
+                  , test_accuracy=accur(Final_testing,Predict_boosting2  )$overall[1]))
+results_test<-rbind(results_test,data.frame(model="rf"            
+                  , test_accuracy=accur(Final_testing,Predict_rf2        )$overall[1]))
+results_test
+```
+
+What gives similar accuracy than the one found by cross validation, i.e. `r toString(round(accur(Final_testing,Predict_rf2)$overall[1],3))`.
+
+
